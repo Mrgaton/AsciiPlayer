@@ -1,4 +1,5 @@
-﻿using OpenCvSharp;
+﻿using NAudio.Wave;
+using OpenCvSharp;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -80,16 +81,18 @@ namespace AsciiPlayer
         [DllImport("kernel32.dll", ExactSpelling = true)] private static extern IntPtr GetConsoleWindow();
 
         public static class ConsoleHelper
-        { private const int FixedWidthTrueType = 54; private const int StandardOutputHandle = -11; [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] internal static extern bool SetCurrentConsoleFontEx(IntPtr hConsoleOutput, bool MaximumWindow, ref FontInfo ConsoleCurrentFontEx); [return: MarshalAs(UnmanagedType.Bool)][DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] internal static extern bool GetCurrentConsoleFontEx(IntPtr hConsoleOutput, bool MaximumWindow, ref FontInfo ConsoleCurrentFontEx); private static readonly IntPtr ConsoleOutputHandle = GetStdHandle(StandardOutputHandle); [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] public struct FontInfo { internal int cbSize; internal int FontIndex; internal short FontWidth; public short FontSize; public int FontFamily; public int FontWeight; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string FontName; }
+        {
+            private const int FixedWidthTrueType = 54; private const int StandardOutputHandle = -11; [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] internal static extern bool SetCurrentConsoleFontEx(IntPtr hConsoleOutput, bool MaximumWindow, ref FontInfo ConsoleCurrentFontEx); [return: MarshalAs(UnmanagedType.Bool)][DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] internal static extern bool GetCurrentConsoleFontEx(IntPtr hConsoleOutput, bool MaximumWindow, ref FontInfo ConsoleCurrentFontEx); private static readonly IntPtr ConsoleOutputHandle = GetStdHandle(StandardOutputHandle); [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] public struct FontInfo { internal int cbSize; internal int FontIndex; internal short FontWidth; public short FontSize; public int FontFamily; public int FontWeight; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string FontName; }
+
             public static FontInfo[] SetCurrentFont(string font, short fontSize = 0)
             {
                 FontInfo before = new FontInfo { cbSize = Marshal.SizeOf<FontInfo>() }; if (GetCurrentConsoleFontEx(ConsoleOutputHandle, false, ref before)) { FontInfo set = new FontInfo { cbSize = Marshal.SizeOf<FontInfo>(), FontIndex = 0, FontFamily = FixedWidthTrueType, FontName = font, FontWeight = 400, FontSize = fontSize > 0 ? fontSize : before.FontSize }; if (!SetCurrentConsoleFontEx(ConsoleOutputHandle, false, ref set)) { throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); } FontInfo after = new FontInfo { cbSize = Marshal.SizeOf<FontInfo>() }; GetCurrentConsoleFontEx(ConsoleOutputHandle, false, ref after); return new[] { before, set, after }; } else { var er = Marshal.GetLastWin32Error(); Console.WriteLine("Get error " + er); throw new System.ComponentModel.Win32Exception(er); }
             }
         }
 
-        private static void Main()
+        private static void Main(string[] arg)
         {
-            string videoPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads\\KittyGo (3).mp4");
+            string videoPath = arg.Length == 0 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads\\Cry_About_It.mp4") : arg[0];
 
             Console.Title = Path.GetFileNameWithoutExtension(videoPath);
 
@@ -97,7 +100,7 @@ namespace AsciiPlayer
 
             consoleHandle = GetStdHandle(-11);
 
-            ConsoleHelper.SetCurrentFont("Consolas", 2);
+            ConsoleHelper.SetCurrentFont("Consolas", 1);
             consoleStream = Console.OpenStandardOutput();
 
             if (!(GetConsoleMode(consoleHandle, out var outConsoleMode) && SetConsoleMode(consoleHandle, outConsoleMode | 0x0001 | 0x0004))) throw new Exception("Error setting console colors comptible");
@@ -113,21 +116,45 @@ namespace AsciiPlayer
 
             char[] charSet = " .,:;i1tfLCG08@#".ToCharArray();
 
-            int withDivisor = 2;
-            int heightDivisor = withDivisor * 2;
+            const int withDivisor = 4;
+            const int heightDivisor = withDivisor * 2;
+
+            const int fpsDivisor = 3;
+
+            int timeBetweenFrames = 0;
 
             while (true)
             {
-                var capture = new VideoCapture(videoPath);
+                MediaFoundationReader reader = new MediaFoundationReader(videoPath);
 
-                int timeBetweenFrames = (int)((1000 / capture.Fps) / 1.08);
+                BufferedWaveProvider bufferedWaveProvider = new BufferedWaveProvider(reader.WaveFormat);
+                bufferedWaveProvider.BufferDuration = TimeSpan.FromMilliseconds(1000);
+                bufferedWaveProvider.DiscardOnBufferOverflow = true;
+
+                WaveOut player = new WaveOut();
+                player.Init(bufferedWaveProvider);
+
+                player.Play();
+
+                VideoCapture capture = new VideoCapture(videoPath);
+
+                int videoFps = (int)capture.Fps / fpsDivisor;
+
+                //int timeBetweenFrames = (int)((1000 / capture.Fps) / 1.08);
+
+                if (timeBetweenFrames == 0)
+                {
+                    timeBetweenFrames = (int)(1000 / (capture.Fps / fpsDivisor));
+
+                    timeBetweenFrames -= timeBetweenFrames / 8;
+                }
 
                 int frameWidth = (int)capture.Get(VideoCaptureProperties.FrameWidth);
                 int frameHeight = (int)capture.Get(VideoCaptureProperties.FrameHeight);
 
                 try
                 {
-                    Console.SetWindowSize((frameWidth / withDivisor) + 1, (frameHeight / heightDivisor) + 1);
+                    Console.SetWindowSize((frameWidth / withDivisor) + 1, (frameHeight / heightDivisor) + 2);
                 }
                 catch { }
 
@@ -136,18 +163,42 @@ namespace AsciiPlayer
                 Console.WriteLine("Begin extracting frames from video file..");
 
                 Stopwatch sw = new Stopwatch();
+                Stopwatch timeIntegrity = new Stopwatch();
 
                 StringBuilder sb = new StringBuilder();
 
                 int maxBrightness = 256 * 3;
 
-                int lastColor = 0;
+                int currentFrame = videoFps;
+
+                int currentSecond = 0, lastColor = 0;
+
+                timeIntegrity.Restart();
 
                 while (capture.IsOpened())
                 {
-                    capture.Read(img);
+                    for (int i = 0; i < fpsDivisor; i++) capture.Read(img);
 
                     if (img.Empty()) break;
+
+                    if (currentFrame >= videoFps)
+                    {
+                        currentFrame = 0;
+
+                        if (timeIntegrity.ElapsedMilliseconds / 1000 < currentSecond)
+                        {
+                            timeBetweenFrames++;
+
+                            Thread.Sleep((currentSecond * 1000) - (int)timeIntegrity.ElapsedMilliseconds);
+                        }
+                        else timeBetweenFrames--;
+
+                        byte[] buffer = new byte[reader.WaveFormat.AverageBytesPerSecond];
+                        int bytesRead = reader.Read(buffer, 0, buffer.Length);
+                        bufferedWaveProvider.AddSamples(buffer, 0, bytesRead);
+
+                        currentSecond++;
+                    }
 
                     for (int y = 0; y < img.Height; y += heightDivisor)
                     {
@@ -157,13 +208,9 @@ namespace AsciiPlayer
 
                             int brightness = (pixelValue.Item0 + pixelValue.Item1 + pixelValue.Item2);
 
-                            //SetConsoleColor();
-
-                            //string element = .ToString(); //.Pastel();
-
                             //sb.Append(charSet[(brightness * charSet.Length) / maxBrightness]);
 
-                            if (Math.Abs(brightness - lastColor) > 4)
+                            if (Math.Abs(brightness - lastColor) > 64)
                             {
                                 sb.Append(Pastel(charSet[(brightness * charSet.Length) / maxBrightness].ToString(), pixelValue.Item2, pixelValue.Item1, pixelValue.Item0));
 
@@ -175,16 +222,17 @@ namespace AsciiPlayer
                             }
                         }
 
-                        //Console.Title = sw.ElapsedMilliseconds.ToString();
-
                         sb.Append('\n');
                     }
 
-                    Console.Title = sb.Length.ToString();
-
                     Write(sb.ToString());
-                    sb.Clear();
                     SetPosition(0);
+
+                    currentFrame++;
+
+                    Console.Title = "CPF:" + sb.Length + " MS:" + sw.ElapsedMilliseconds + " TBF:" + timeBetweenFrames;
+
+                    sb.Clear();
 
                     if (sw.ElapsedMilliseconds < timeBetweenFrames) Thread.Sleep(timeBetweenFrames - (int)sw.ElapsedMilliseconds);
 
