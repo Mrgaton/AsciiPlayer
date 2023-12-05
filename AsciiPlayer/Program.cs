@@ -1,4 +1,6 @@
-﻿using NAudio.Wave;
+﻿//#define colorEnabled
+
+using NAudio.Wave;
 using OpenCvSharp;
 using System;
 using System.Diagnostics;
@@ -24,7 +26,7 @@ namespace AsciiPlayer
 
         private static void ResetColor() => Write("\u001b[0m");
 
-        private static string Pastel(string text, byte r, byte g, byte b) => "\u001b[38;2;" + r + ";" + g + ";" + b + "m" + text;
+        private static string Pastel(string text, int r, int g, int b) => "\u001b[38;2;" + r + ";" + g + ";" + b + "m" + text;
 
         [StructLayout(LayoutKind.Sequential)] public struct COORD { public short X; public short Y; }
 
@@ -92,18 +94,26 @@ namespace AsciiPlayer
 
         private static void Main(string[] arg)
         {
-            string videoPath = arg.Length == 0 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads\\Cry_About_It.mp4") : arg[0];
+            string videoPath = arg.Length == 0 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads\\Bad Apple!!.mp4") : arg[0];
 
             Console.Title = Path.GetFileNameWithoutExtension(videoPath);
 
-            Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.RealTime;
+            using (Process currentProcess = Process.GetCurrentProcess())
+            {
+                currentProcess.PriorityBoostEnabled = true;
+                currentProcess.PriorityClass = ProcessPriorityClass.RealTime;
+            }
 
             consoleHandle = GetStdHandle(-11);
 
             ConsoleHelper.SetCurrentFont("Consolas", 1);
+
             consoleStream = Console.OpenStandardOutput();
 
             if (!(GetConsoleMode(consoleHandle, out var outConsoleMode) && SetConsoleMode(consoleHandle, outConsoleMode | 0x0001 | 0x0004))) throw new Exception("Error setting console colors comptible");
+
+
+            Console.OutputEncoding = Encoding.UTF8;
 
             GetConsoleScreenBufferInfo(consoleHandle, out var scrBufferInfo);
             SetConsoleScreenBufferSize(consoleHandle, new COORD { X = scrBufferInfo.dwSize.X, Y = (short)(scrBufferInfo.srWindow.Bottom - scrBufferInfo.srWindow.Top + 1) });
@@ -112,33 +122,56 @@ namespace AsciiPlayer
 
             SetWindowLong(consoleWindowHandle, GWL_STYLE, GetWindowLong(consoleWindowHandle, GWL_STYLE) & ~WS_MAXIMIZEBOX & ~WS_MINIMIZEBOX);
 
+            Write(Pastel("", 255, 255, 255));
+
+
             //char[] charSet = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,\"^`'.  ";
 
-            char[] charSet = " .,:;i1tfLCG08@#".ToCharArray();
+            const int maxBrightness = 256 * 3;
 
-            const int withDivisor = 4;
-            const int heightDivisor = withDivisor * 2;
+            char[] charSet = " .,:;i1tfLCOG08@#".ToCharArray();
 
-            const int fpsDivisor = 3;
+            const int colorLessMinCharSetLengh = 1;
+
+            int blankBrightNess = ((maxBrightness) / charSet.Length) * colorLessMinCharSetLengh;
+
+            const byte colorRoundDivisor = 1;
+            const byte BrightnessRoundDivisor = 1;
+
+            const byte minColorChangeNeeded = 64;
+
+            const int fpsDivisor = 1;
+
+            const int withDivisor = 1, heightDivisor = withDivisor * 2;
 
             int timeBetweenFrames = 0;
+
+            const int audioBufferLengh = 1 * 1000;
+
+            VideoCapture capture = new VideoCapture();
+
 
             while (true)
             {
                 MediaFoundationReader reader = new MediaFoundationReader(videoPath);
 
+                byte[] audioBuffer = new byte[reader.WaveFormat.AverageBytesPerSecond];
+
                 BufferedWaveProvider bufferedWaveProvider = new BufferedWaveProvider(reader.WaveFormat);
-                bufferedWaveProvider.BufferDuration = TimeSpan.FromMilliseconds(1000);
+                bufferedWaveProvider.BufferDuration = TimeSpan.FromMilliseconds(audioBufferLengh * 4);
                 bufferedWaveProvider.DiscardOnBufferOverflow = true;
+                bufferedWaveProvider.ReadFully = true;
 
                 WaveOut player = new WaveOut();
                 player.Init(bufferedWaveProvider);
 
+                player.DesiredLatency = (audioBufferLengh / 2) - timeBetweenFrames;
                 player.Play();
 
-                VideoCapture capture = new VideoCapture(videoPath);
 
-                int videoFps = (int)capture.Fps / fpsDivisor;
+                capture.Open(videoPath, VideoCaptureAPIs.ANY);
+
+                int videoFps = (int)Math.Round(capture.Fps) / fpsDivisor;
 
                 //int timeBetweenFrames = (int)((1000 / capture.Fps) / 1.08);
 
@@ -146,17 +179,28 @@ namespace AsciiPlayer
                 {
                     timeBetweenFrames = (int)(1000 / (capture.Fps / fpsDivisor));
 
-                    timeBetweenFrames -= timeBetweenFrames / 8;
+                    timeBetweenFrames -= timeBetweenFrames / 16;
                 }
 
                 int frameWidth = (int)capture.Get(VideoCaptureProperties.FrameWidth);
                 int frameHeight = (int)capture.Get(VideoCaptureProperties.FrameHeight);
 
-                try
+                bool sucess = false;
+
+                while(!sucess)
                 {
-                    Console.SetWindowSize((frameWidth / withDivisor) + 1, (frameHeight / heightDivisor) + 2);
+                    try
+                    {
+                        Console.SetWindowSize((frameWidth / withDivisor) + 1, (frameHeight / heightDivisor) + 2);
+
+                        sucess = true;
+                    }
+                    catch
+                    {
+                        Write("Please set console smallet with control + minus");
+                        Thread.Sleep(200);
+                    }
                 }
-                catch { }
 
                 Mat img = new Mat();
 
@@ -167,13 +211,15 @@ namespace AsciiPlayer
 
                 StringBuilder sb = new StringBuilder();
 
-                int maxBrightness = 256 * 3;
-
                 int currentFrame = videoFps;
 
                 int currentSecond = 0, lastColor = 0;
 
                 timeIntegrity.Restart();
+
+                int lasSleepTime = 0;
+
+                long difference = 0;
 
                 while (capture.IsOpened())
                 {
@@ -183,22 +229,30 @@ namespace AsciiPlayer
 
                     if (currentFrame >= videoFps)
                     {
-                        currentFrame = 0;
+                        if (currentSecond > 0) difference = (timeIntegrity.ElapsedMilliseconds / currentSecond) - 1000;
 
                         if (timeIntegrity.ElapsedMilliseconds / 1000 < currentSecond)
                         {
-                            timeBetweenFrames++;
+                            int timeToWait = (currentSecond * 1000) - (int)timeIntegrity.ElapsedMilliseconds - 1;
 
-                            Thread.Sleep((currentSecond * 1000) - (int)timeIntegrity.ElapsedMilliseconds);
+                            if (timeToWait > timeBetweenFrames) timeBetweenFrames++;
+
+                            lasSleepTime = timeToWait;
+
+                            Thread.Sleep(timeToWait);
                         }
-                        else timeBetweenFrames--;
+                        else// if (difference > timeBetweenFrames)
+                        {
+                            timeBetweenFrames--;
+                        }
 
-                        byte[] buffer = new byte[reader.WaveFormat.AverageBytesPerSecond];
-                        int bytesRead = reader.Read(buffer, 0, buffer.Length);
-                        bufferedWaveProvider.AddSamples(buffer, 0, bytesRead);
+                        int bytesRead = reader.Read(audioBuffer, 0, audioBuffer.Length);
+                        bufferedWaveProvider.AddSamples(audioBuffer, 0, bytesRead);
 
+                        currentFrame = 0;
                         currentSecond++;
                     }
+
 
                     for (int y = 0; y < img.Height; y += heightDivisor)
                     {
@@ -206,31 +260,45 @@ namespace AsciiPlayer
                         {
                             Vec3b pixelValue = img.At<Vec3b>(y, x);
 
-                            int brightness = (pixelValue.Item0 + pixelValue.Item1 + pixelValue.Item2);
-
-                            //sb.Append(charSet[(brightness * charSet.Length) / maxBrightness]);
-
-                            if (Math.Abs(brightness - lastColor) > 64)
+                            if (colorRoundDivisor > 1)
                             {
-                                sb.Append(Pastel(charSet[(brightness * charSet.Length) / maxBrightness].ToString(), pixelValue.Item2, pixelValue.Item1, pixelValue.Item0));
+                                pixelValue.Item0 = (byte)RoundColor(pixelValue.Item0, colorRoundDivisor);
+                                pixelValue.Item1 = (byte)RoundColor(pixelValue.Item1, colorRoundDivisor);
+                                pixelValue.Item2 = (byte)RoundColor(pixelValue.Item2, colorRoundDivisor);
+                            }
+
+                            int brightness = pixelValue.Item0 + pixelValue.Item1 + pixelValue.Item2;
+
+                            if (BrightnessRoundDivisor > 1) brightness = RoundColor(brightness, colorRoundDivisor);
+
+                            char predictedChar = charSet[(brightness * charSet.Length) / maxBrightness];
+
+#if colorEnabled
+                            if (brightness > blankBrightNess && Math.Abs(brightness - lastColor) > minColorChangeNeeded) //Dont change the color if its too similar to the current one
+                            {
+                                sb.Append(Pastel(predictedChar.ToString(), pixelValue.Item2, pixelValue.Item1, pixelValue.Item0));
 
                                 lastColor = brightness;
                             }
                             else
                             {
-                                sb.Append(charSet[(brightness * charSet.Length) / maxBrightness]);
+                                sb.Append(predictedChar);
                             }
+#else
+                            sb.Append(predictedChar);
+#endif
                         }
 
                         sb.Append('\n');
                     }
 
                     Write(sb.ToString());
+
                     SetPosition(0);
 
                     currentFrame++;
 
-                    Console.Title = "CPF:" + sb.Length + " MS:" + sw.ElapsedMilliseconds + " TBF:" + timeBetweenFrames;
+                    Console.Title = "CPF:" + sb.Length + " MS:" + sw.ElapsedMilliseconds + " TBF:" + timeBetweenFrames + " LST: " + lasSleepTime + " D:" + difference;
 
                     sb.Clear();
 
@@ -239,6 +307,12 @@ namespace AsciiPlayer
                     sw.Restart();
                 }
             }
+        }
+        public static int RoundColor(int color, int divisor)
+        {
+            int remainder = (color & (divisor - 1));
+
+            return (remainder >= divisor >> 1 ? Math.Min(color + divisor - remainder, 255) : color - remainder);
         }
     }
 }
