@@ -1,4 +1,4 @@
-﻿//#define colorEnabled
+﻿#define colorEnabled
 
 using NAudio.Wave;
 using OpenCvSharp;
@@ -9,6 +9,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Windows.Forms;
 
 namespace AsciiPlayer
 {
@@ -24,6 +25,7 @@ namespace AsciiPlayer
         private static void SetPosition(int i) => SetConsoleCursorPosition(consoleHandle, i);
 
         private static void Write(string str) => Write(Encoding.UTF8.GetBytes(str));
+        private static void Write(ref string str) => Write(Encoding.UTF8.GetBytes(str));
 
         private static void Write(byte[] buffer) => consoleStream.Write(buffer, 0, buffer.Length);
 
@@ -101,7 +103,7 @@ namespace AsciiPlayer
         }
         private static void Main(string[] arg)
         {
-            string videoPath = arg.Length == 0 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads\\Bad Apple!!.mp4") : arg[0];
+            string videoPath = arg.Length == 0 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads\\WhatsApp Video 2023-08-03 at 22.24.01.mp4") : arg[0];
 
             Console.Title = Path.GetFileNameWithoutExtension(videoPath);
 
@@ -124,9 +126,6 @@ namespace AsciiPlayer
             //GetConsoleScreenBufferInfo(consoleHandle, out var scrBufferInfo);
             //SetConsoleScreenBufferSize(consoleHandle, new COORD { X = scrBufferInfo.dwSize.X, Y = (short)(scrBufferInfo.srWindow.Bottom - scrBufferInfo.srWindow.Top + 1) });
 
-            Console.BufferWidth = Console.WindowWidth;
-            Console.BufferHeight = Console.WindowHeight;
-
             IntPtr consoleWindowHandle = GetConsoleWindow();
 
             SetWindowLong(consoleWindowHandle, GWL_STYLE, GetWindowLong(consoleWindowHandle, GWL_STYLE) & ~WS_MAXIMIZEBOX & ~WS_MINIMIZEBOX);
@@ -140,11 +139,14 @@ namespace AsciiPlayer
             char[] charSet = " .,:;i1tfLCOG08@#".ToCharArray();
 
             const int colorLessMinCharSetLengh = 1;
-            const int minColorChangeNeeded = 64 * 2;
+
+#if colorEnabled
+            const int minColorChangeNeeded = 64;
+#endif
 
             const int fpsDivisor = 1;
 
-            const int withDivisor = 2, heightDivisor = withDivisor * 2;
+            const int withDivisor = 4, heightDivisor = withDivisor * 2;
 
             const int audioBufferLengh = 1000;
 
@@ -156,176 +158,208 @@ namespace AsciiPlayer
 
             while (true)
             {
-                MediaFoundationReader reader = new MediaFoundationReader(videoPath);
+                /*MediaFoundationReader reader = new MediaFoundationReader(videoPath);
 
                 BufferedWaveProvider bufferedWaveProvider = new BufferedWaveProvider(reader.WaveFormat);
                 bufferedWaveProvider.BufferDuration = TimeSpan.FromMilliseconds(audioBufferLengh * 4);
                 bufferedWaveProvider.DiscardOnBufferOverflow = true;
                 bufferedWaveProvider.ReadFully = true;
 
-                using (WaveOut player = new WaveOut())
+                WaveOut player = new WaveOut();
+
+                player.Init(bufferedWaveProvider);
+
+                //player.DesiredLatency = timeBetweenFrames;
+                player.Play(); */
+
+                capture.Open(videoPath, VideoCaptureAPIs.ANY);
+
+                int videoFps = (int)Math.Round(capture.Fps) / fpsDivisor;
+
+                //int timeBetweenFrames = (int)((1000 / capture.Fps) / 1.08);
+
+                if (timeBetweenFrames == 0)
                 {
-                    player.Init(bufferedWaveProvider);
-
-                    //player.DesiredLatency = timeBetweenFrames;
-                    player.Play();
-
-                    capture.Open(videoPath, VideoCaptureAPIs.ANY);
-
-                    int videoFps = (int)Math.Round(capture.Fps) / fpsDivisor;
-
-                    //int timeBetweenFrames = (int)((1000 / capture.Fps) / 1.08);
-
-                    if (timeBetweenFrames == 0)
-                    {
-                        timeBetweenFrames = (int)(1000 / (capture.Fps / fpsDivisor));
+                    timeBetweenFrames = (int)(1000 / (capture.Fps / fpsDivisor));
 
 #if colorEnabled
-                        timeBetweenFrames -= timeBetweenFrames / 16;
+                    timeBetweenFrames -= timeBetweenFrames / 16;
 #endif
+                }
+
+                int frameWidth = (int)capture.Get(VideoCaptureProperties.FrameWidth);
+                int frameHeight = (int)capture.Get(VideoCaptureProperties.FrameHeight);
+
+                bool sucess = false;
+
+                while (!sucess)
+                {
+                    try
+                    {
+                        Console.SetWindowSize((frameWidth / withDivisor) + 1, (frameHeight / heightDivisor) + 2);
+
+                        sucess = true;
+                    }
+                    catch
+                    {
+                        Write("Please set console smallet with control + minus");
+                        Thread.Sleep(200);
+                    }
+                }
+
+                Console.BufferWidth = Console.WindowWidth;
+                Console.BufferHeight = Console.WindowHeight;
+
+                Mat img = new Mat();
+
+                Console.WriteLine("Begin extracting frames from video file..");
+
+                Stopwatch sw = new Stopwatch();
+                Stopwatch timeIntegrity = new Stopwatch();
+
+                StringBuilder sb = new StringBuilder();
+
+                int currentFrame = videoFps;
+
+                int currentSecond = 0;
+
+                byte lastR = 0, lastG = 0, lastB = 0;
+
+                timeIntegrity.Restart();
+
+                int lasSleepTime = 0;
+
+                long difference = 0;
+
+                int[] rowIndexes = new int[(frameHeight / heightDivisor) + 4];
+
+                while (capture.IsOpened())
+                {
+                    for (int i = 0; i < fpsDivisor; i++) capture.Read(img);
+
+                    if (img.Empty()) break;
+
+                    if (currentFrame >= videoFps)
+                    {
+                        if (currentSecond > 0) difference = (timeIntegrity.ElapsedMilliseconds / currentSecond) - 1000;
+
+                        if (timeIntegrity.ElapsedMilliseconds / 1000 < currentSecond)
+                        {
+                            int timeToWait = (currentSecond * 1000) - (int)timeIntegrity.ElapsedMilliseconds - 1;
+
+                            if (timeToWait > timeBetweenFrames) timeBetweenFrames++;
+
+                            lasSleepTime = timeToWait;
+
+                            Thread.Sleep(timeToWait);
+                        }
+                        else// if (difference > timeBetweenFrames)
+                        {
+                            if (timeBetweenFrames > 0) timeBetweenFrames--;
+                        }
+
+                        //WriteAudio(bufferedWaveProvider, reader, currentSecond == 0 ? 2 : 1);
+
+                        currentFrame = 0;
+                        currentSecond++;
                     }
 
-                    int frameWidth = (int)capture.Get(VideoCaptureProperties.FrameWidth);
-                    int frameHeight = (int)capture.Get(VideoCaptureProperties.FrameHeight);
-
-                    bool sucess = false;
-
-                    while (!sucess)
+                    for (int y = 0; y < img.Height; y += heightDivisor)
                     {
-                        try
+                        for (int x = 0; x < img.Width; x += withDivisor)
                         {
-                            Console.SetWindowSize((frameWidth / withDivisor) + 2, (frameHeight / heightDivisor) + 2);
+                            Vec3b pixelValue = img.At<Vec3b>(y, x);
 
-                            sucess = true;
-                        }
-                        catch
-                        {
-                            Write("Please set console smallet with control + minus");
-                            Thread.Sleep(200);
-                        }
-                    }
+                            int brightness = pixelValue.Item0 + pixelValue.Item1 + pixelValue.Item2;
 
-                    Mat img = new Mat();
+                            char predictedChar = charSet[(brightness * charSet.Length) / maxBrightness];
 
-                    Console.WriteLine("Begin extracting frames from video file..");
+                            MaximizeBrightness(ref pixelValue.Item2, ref pixelValue.Item1, ref pixelValue.Item0);
 
-                    Stopwatch sw = new Stopwatch();
-                    Stopwatch timeIntegrity = new Stopwatch();
-
-                    StringBuilder sb = new StringBuilder();
-
-                    int currentFrame = videoFps;
-
-                    int currentSecond = 0, lastColor = 0;
-
-                    timeIntegrity.Restart();
-
-                    int lasSleepTime = 0;
-
-                    long difference = 0;
-
-                    int[] rowIndexes = new int[(frameHeight / heightDivisor) + 1];
-
-                    while (capture.IsOpened())
-                    {
-                        for (int i = 0; i < fpsDivisor; i++) capture.Read(img);
-
-                        if (img.Empty()) break;
-
-                        if (currentFrame >= videoFps)
-                        {
-                            if (currentSecond > 0) difference = (timeIntegrity.ElapsedMilliseconds / currentSecond) - 1000;
-
-                            if (timeIntegrity.ElapsedMilliseconds / 1000 < currentSecond)
-                            {
-                                int timeToWait = (currentSecond * 1000) - (int)timeIntegrity.ElapsedMilliseconds - 1;
-
-                                if (timeToWait > timeBetweenFrames) timeBetweenFrames++;
-
-                                lasSleepTime = timeToWait;
-
-                                Thread.Sleep(timeToWait);
-                            }
-                            else// if (difference > timeBetweenFrames)
-                            {
-                                if (timeBetweenFrames > 0) timeBetweenFrames--;
-                            }
-
-                            WriteAudio(bufferedWaveProvider, reader, currentSecond == 0 ? 2 : 1);
-
-                            currentFrame = 0;
-                            currentSecond++;
-                        }
-
-                        for (int y = 0; y < img.Height; y += heightDivisor)
-                        {
-                            for (int x = 0; x < img.Width; x += withDivisor)
-                            {
-                                Vec3b pixelValue = img.At<Vec3b>(y, x);
-
-                                int brightness = pixelValue.Item0 + pixelValue.Item1 + pixelValue.Item2;
-                                char predictedChar = charSet[(brightness * charSet.Length) / maxBrightness];
-
+                            int colorDiff = (Math.Abs(pixelValue.Item2 - lastR) + Math.Abs(pixelValue.Item1 - lastG) + Math.Abs(pixelValue.Item0 - lastB));
 #if colorEnabled
-                                if (brightness > blankBrightNess && Math.Abs(brightness - lastColor) > minColorChangeNeeded) //Dont change the color if its too similar to the current one
-                                {
-                                    sb.Append(Pastel(predictedChar.ToString(), pixelValue.Item2, pixelValue.Item1, pixelValue.Item0));
+                            if (brightness > blankBrightNess && colorDiff > minColorChangeNeeded) //Dont change the color if its too similar to the current one
+                            {
+                                sb.Append(Pastel(predictedChar.ToString(), pixelValue.Item2, pixelValue.Item1, pixelValue.Item0));
 
-                                    lastColor = brightness;
-                                }
-                                else
-                                {
-                                    sb.Append(predictedChar);
-                                }
+                                lastR = pixelValue.Item2;
+                                lastG = pixelValue.Item1;
+                                lastB = pixelValue.Item0;
+                            }
+                            else
+                            {
+                                sb.Append(predictedChar);
+                            }
 
 #else
                                 sb.Append(predictedChar);
 #endif
-                            }
-
-                            sb.Append('\n');
                         }
 
-                        int currentRowIndex = 0;
+                        sb.Append('\n');
+                    }
+
+                    int currentRowIndex = 0;
 
 #if colorEnabled
-                        string frame = sb.ToString();
+                    string frame = sb.ToString();
 #else
-string frame = string.Join("\n", sb.ToString().Split('\n').Select(line =>
+
+                        int lengh = sb.ToString().Split('\n').Length;
+
+                        string frame = string.Join("\n", sb.ToString().Split('\n').Select(line =>
                         {
                             string trimed = line.TrimEnd();
 
-                            int trimedLengh = RemoveAnsi(trimed).Length;
+                            int trimedLengh = trimed.Length; //RemoveAnsi(trimed).Length;
+
+                            Console.WriteLine(lengh);
 
                             int diff = rowIndexes[currentRowIndex] - trimedLengh;
-                            rowIndexes[currentRowIndex] = trimedLengh;
 
-                            currentRowIndex++;
+                            rowIndexes[currentRowIndex++] = trimedLengh;
 
                             if (diff <= 0) return trimed;
 
-                            return trimed + new string(' ',diff);
+                            return trimed + new string(' ', diff);
                         }));
 #endif
 
 
-                        sb.Clear();
+                    sb.Clear();
 
-                        Write(frame);
+                    Write(ref frame);
 
-                        SetPosition(0);
+                    SetPosition(0);
 
-                        currentFrame++;
+                    currentFrame++;
 
-                        Console.Title = "CPF:" + frame.Length + " MS:" + sw.ElapsedMilliseconds + " TBF:" + timeBetweenFrames + " LST: " + lasSleepTime + " D:" + difference;
+                    Console.Title = "Git:Mrgaton AsciiPlayer CPF:" + frame.Length + " MS:" + sw.ElapsedMilliseconds + " TBF:" + timeBetweenFrames + " LST: " + lasSleepTime + " D:" + difference;
 
-                        if (sw.ElapsedMilliseconds < timeBetweenFrames) Thread.Sleep(timeBetweenFrames - (int)sw.ElapsedMilliseconds);
+                    if (sw.ElapsedMilliseconds < timeBetweenFrames) Thread.Sleep(timeBetweenFrames - (int)sw.ElapsedMilliseconds);
 
-                        sw.Restart();
-                    }
+                    sw.Restart();
                 }
+
+                Thread.Sleep(500);
+            }
+
+        }
+
+        public static void MaximizeBrightness(ref byte R, ref byte G, ref byte B)
+        {
+            byte maxOriginal = Math.Max(R, Math.Max(G, B));
+
+            if (maxOriginal > 0)
+            {
+                double factor = 255.0 / maxOriginal;
+
+                R = (byte)(R * factor);
+                G = (byte)(G * factor);
+                B = (byte)(B * factor);
             }
         }
+
 
         public static void WriteAudio(BufferedWaveProvider buffer, MediaFoundationReader reader, int secconds)
         {
@@ -334,13 +368,13 @@ string frame = string.Join("\n", sb.ToString().Split('\n').Select(line =>
             buffer.AddSamples(audioBuffer, 0, bytesRead);
         }
 
-        public static string RemoveAnsi(string txt)
+        /*public static string RemoveAnsi(string txt)
         {
             StringBuilder sb = new StringBuilder();
 
             bool insideCmd = false;
 
-            foreach(char c in txt)
+            foreach (char c in txt)
             {
                 if (c == '\u001b') insideCmd = true;
                 if (insideCmd && c == 'm') insideCmd = false;
@@ -349,7 +383,8 @@ string frame = string.Join("\n", sb.ToString().Split('\n').Select(line =>
             }
 
             return sb.ToString();
-        }
+        }*/
+
         /*public static int RoundColor(int color, int divisor)
         {
             int remainder = (color & (divisor - 1));
