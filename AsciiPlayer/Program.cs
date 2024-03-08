@@ -3,13 +3,12 @@
 using NAudio.Wave;
 using OpenCvSharp;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using System.Windows.Forms;
 
 namespace AsciiPlayer
 {
@@ -25,6 +24,7 @@ namespace AsciiPlayer
         private static void SetPosition(int i) => SetConsoleCursorPosition(consoleHandle, i);
 
         private static void Write(string str) => Write(Encoding.UTF8.GetBytes(str));
+
         private static void Write(ref string str) => Write(Encoding.UTF8.GetBytes(str));
 
         private static void Write(byte[] buffer) => consoleStream.Write(buffer, 0, buffer.Length);
@@ -34,7 +34,7 @@ namespace AsciiPlayer
         private static void ResetColor() => Write("\u001b[0m");
 
         private static string Pastel(string text, int r, int g, int b) => "\u001b[38;2;" + r + ";" + g + ";" + b + "m" + text;
-
+        private static string Pastel(char c, int r, int g, int b) => "\u001b[38;2;" + r + ";" + g + ";" + b + "m" + c;
         private static string SetPosition(int row, int collum) => "\u001b[" + row + ";" + collum + "H";
 
         [StructLayout(LayoutKind.Sequential)]
@@ -52,6 +52,7 @@ namespace AsciiPlayer
         [StructLayout(LayoutKind.Sequential)] public struct SMALL_RECT { public short Left; public short Top; public short Right; public short Bottom; }
 
         [StructLayout(LayoutKind.Sequential)] public struct CONSOLE_SCREEN_BUFFER_INFOEX { public uint cbSize; public COORD dwSize; public COORD dwCursorPosition; public ushort wAttributes; public SMALL_RECT srWindow; public COORD dwMaximumWindowSize; public ushort wPopupAttributes; public bool bFullscreenSupported; [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public uint[] ColorTable; public uint ulInformationalMask; }
+
         [StructLayout(LayoutKind.Sequential)] public struct CONSOLE_FONT_INFOEX { public uint cbSize; public uint nFont; public COORD dwFontSize; public int FontFamily; public int FontWeight; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string FaceName; }
 
         [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleScreenBufferInfoEx(IntPtr hConsoleOutput, ref CONSOLE_SCREEN_BUFFER_INFOEX ConsoleScreenBufferInfoEx);
@@ -101,9 +102,37 @@ namespace AsciiPlayer
             GlobalBrightNess,
             ColorDifferenceChange
         }
-        private static void Main(string[] arg)
+
+        private static Dictionary<string, string> argsSplited = new Dictionary<string, string>();
+
+        private static bool ParseBool(string text, bool defaultValue = default)
         {
-            string videoPath = arg.Length == 0 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads\\WhatsApp Video 2023-08-03 at 22.24.01.mp4") : arg[0];
+            string trimed = text.Trim();
+
+            if (char.ToLower(trimed[0]) == 't' || trimed == "1") return true;
+            else if (char.ToLower(trimed[0]) == 'f' || trimed == "0") return false;
+
+            return bool.TryParse(text, out bool res) ? res : defaultValue;
+        }
+
+        private static bool GetArgBool(string argName, bool defaultValue) => argsSplited.ContainsKey(argName) ? ParseBool(argsSplited[argName], defaultValue) : defaultValue;
+
+        private static string GetArgString(string argName, string defaultValue) => argsSplited.ContainsKey(argName) ? argsSplited[argName] : defaultValue;
+
+        private static int GetArgInt(string argName, int defaultValue) => argsSplited.ContainsKey(argName) ? int.TryParse(argsSplited[argName], out int parsed) ? parsed : defaultValue : defaultValue;
+
+        private static void Main(string[] args)
+        {
+            foreach (string argument in args)
+            {
+                int index = argument.IndexOf('=');
+
+                string value = argument.Substring(index + 1);
+
+                if (index != -1) argsSplited.Add(argument.Substring(0, index).ToLower(), (value[0] == '\"' && value[value.Length - 1] == '\"' ? value.Substring(1, value.Length - 2) : value));
+            }
+
+            string videoPath = args.Length == 0 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads\\tactical thermonuclear gnome.mp4") : args[0];
 
             Console.Title = Path.GetFileNameWithoutExtension(videoPath);
 
@@ -134,6 +163,8 @@ namespace AsciiPlayer
 
             //char[] charSet = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,\"^`'.  ";
 
+            bool loopVideo = GetArgBool("loop", true);
+
             const int maxBrightness = 256 * 3;
 
             char[] charSet = " .,:;i1tfLCOG08@#".ToCharArray();
@@ -141,12 +172,12 @@ namespace AsciiPlayer
             const int colorLessMinCharSetLengh = 1;
 
 #if colorEnabled
-            const int minColorChangeNeeded = 64;
+            int minColorChangeNeeded = GetArgInt("minColorChange", 64);
 #endif
 
-            const int fpsDivisor = 1;
+            int fpsDivisor = GetArgInt("fpsDivisor", 1);
 
-            const int withDivisor = 4, heightDivisor = withDivisor * 2;
+            int withDivisor = GetArgInt("sizeDivisor", 3), heightDivisor = withDivisor * 2;
 
             const int audioBufferLengh = 1000;
 
@@ -158,19 +189,19 @@ namespace AsciiPlayer
 
             while (true)
             {
-                /*MediaFoundationReader reader = new MediaFoundationReader(videoPath);
+                MediaFoundationReader reader = new MediaFoundationReader(videoPath);
 
                 BufferedWaveProvider bufferedWaveProvider = new BufferedWaveProvider(reader.WaveFormat);
                 bufferedWaveProvider.BufferDuration = TimeSpan.FromMilliseconds(audioBufferLengh * 4);
-                bufferedWaveProvider.DiscardOnBufferOverflow = true;
+                bufferedWaveProvider.DiscardOnBufferOverflow = false;
                 bufferedWaveProvider.ReadFully = true;
 
-                WaveOut player = new WaveOut();
+                WaveOutEvent player = new WaveOutEvent();
 
                 player.Init(bufferedWaveProvider);
 
                 //player.DesiredLatency = timeBetweenFrames;
-                player.Play(); */
+                player.Play();
 
                 capture.Open(videoPath, VideoCaptureAPIs.ANY);
 
@@ -202,8 +233,9 @@ namespace AsciiPlayer
                     }
                     catch
                     {
-                        Write("Please set console smallet with control + minus");
-                        Thread.Sleep(200);
+                        Write("Please set console smallet with (control + minus)");
+
+                        Thread.Sleep(500);
                     }
                 }
 
@@ -258,7 +290,7 @@ namespace AsciiPlayer
                             if (timeBetweenFrames > 0) timeBetweenFrames--;
                         }
 
-                        //WriteAudio(bufferedWaveProvider, reader, currentSecond == 0 ? 2 : 1);
+                        WriteAudio(bufferedWaveProvider, reader, currentSecond == 0 ? 2 : 1);
 
                         currentFrame = 0;
                         currentSecond++;
@@ -274,13 +306,13 @@ namespace AsciiPlayer
 
                             char predictedChar = charSet[(brightness * charSet.Length) / maxBrightness];
 
-                            MaximizeBrightness(ref pixelValue.Item2, ref pixelValue.Item1, ref pixelValue.Item0);
+                            //MaximizeBrightness(ref pixelValue.Item2, ref pixelValue.Item1, ref pixelValue.Item0);
 
-                            int colorDiff = (Math.Abs(pixelValue.Item2 - lastR) + Math.Abs(pixelValue.Item1 - lastG) + Math.Abs(pixelValue.Item0 - lastB));
+                            int colorDiff = Math.Abs(pixelValue.Item2 - lastR) + Math.Abs(pixelValue.Item1 - lastG) + Math.Abs(pixelValue.Item0 - lastB);
 #if colorEnabled
                             if (brightness > blankBrightNess && colorDiff > minColorChangeNeeded) //Dont change the color if its too similar to the current one
                             {
-                                sb.Append(Pastel(predictedChar.ToString(), pixelValue.Item2, pixelValue.Item1, pixelValue.Item0));
+                                sb.Append(Pastel(predictedChar, pixelValue.Item2, pixelValue.Item1, pixelValue.Item0));
 
                                 lastR = pixelValue.Item2;
                                 lastG = pixelValue.Item1;
@@ -325,7 +357,6 @@ namespace AsciiPlayer
                         }));
 #endif
 
-
                     sb.Clear();
 
                     Write(ref frame);
@@ -334,16 +365,17 @@ namespace AsciiPlayer
 
                     currentFrame++;
 
-                    Console.Title = "Git:Mrgaton AsciiPlayer CPF:" + frame.Length + " MS:" + sw.ElapsedMilliseconds + " TBF:" + timeBetweenFrames + " LST: " + lasSleepTime + " D:" + difference;
+                    Console.Title = "Git:Mrgaton/AsciiPlayer CPF:" + frame.Length + " MS:" + sw.ElapsedMilliseconds + " TBF:" + timeBetweenFrames + " LST: " + lasSleepTime + " D:" + difference;
 
                     if (sw.ElapsedMilliseconds < timeBetweenFrames) Thread.Sleep(timeBetweenFrames - (int)sw.ElapsedMilliseconds);
 
                     sw.Restart();
                 }
 
+                if (!loopVideo) break;
+                    
                 Thread.Sleep(500);
             }
-
         }
 
         public static void MaximizeBrightness(ref byte R, ref byte G, ref byte B)
@@ -359,7 +391,6 @@ namespace AsciiPlayer
                 B = (byte)(B * factor);
             }
         }
-
 
         public static void WriteAudio(BufferedWaveProvider buffer, MediaFoundationReader reader, int secconds)
         {
