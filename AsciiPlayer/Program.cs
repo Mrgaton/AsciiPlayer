@@ -172,12 +172,12 @@ namespace AsciiPlayer
             const int colorLessMinCharSetLengh = 1;
 
 #if colorEnabled
-            int minColorChangeNeeded = GetArgInt("minColorChange", 64);
+            int minColorChangeNeeded = GetArgInt("mincolorchange", 64);
 #endif
 
-            int fpsDivisor = GetArgInt("fpsDivisor", 1);
+            int fpsDivisor = GetArgInt("fpsdivisor", 1);
 
-            int withDivisor = GetArgInt("sizeDivisor", 3), heightDivisor = withDivisor * 2;
+            int withDivisor = GetArgInt("sizedivisor", 3), heightDivisor = withDivisor * 2;
 
             const int audioBufferLengh = 1000;
 
@@ -374,7 +374,7 @@ namespace AsciiPlayer
 
                 if (!loopVideo) break;
                     
-                Thread.Sleep(500);
+                Thread.Sleep(750);
             }
         }
 
