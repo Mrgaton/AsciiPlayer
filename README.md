@@ -1,3 +1,3 @@
 # AsciiPlayer
 
-An Ascii video player with color and terrible audio for windows that is extremly slow with high resolutions with color enabled
+An Ascii video player with color and terrible audio for Windows that is extremely slow with high resolutions when the color is enabled
