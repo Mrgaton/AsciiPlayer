@@ -2,9 +2,12 @@
 
 using NAudio.Wave;
 using OpenCvSharp;
+using OpenCvSharp.Extensions;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -23,18 +26,21 @@ namespace AsciiPlayer
 
         private static void SetPosition(int i) => SetConsoleCursorPosition(consoleHandle, i);
 
-        private static void Write(string str) => Write(Encoding.UTF8.GetBytes(str));
+        private static void WriteConsole(string str) => WriteConsole(Encoding.UTF8.GetBytes(str));
 
-        private static void Write(ref string str) => Write(Encoding.UTF8.GetBytes(str));
+        private static void WriteConsole(ref string str) => WriteConsole(Encoding.UTF8.GetBytes(str));
 
-        private static void Write(byte[] buffer) => consoleStream.Write(buffer, 0, buffer.Length);
+        private static void WriteConsole(byte[] buffer) => consoleStream.Write(buffer, 0, buffer.Length);
 
-        private static void Write(byte b) => consoleStream.WriteByte(b);
+        private static void WriteConsole(byte b) => consoleStream.WriteByte(b);
 
-        private static void ResetColor() => Write("\u001b[0m");
+        private static void SetSize(int x, int y) => WriteConsole("\u001b[8;" + y + ";" + x + "t");
 
-        private static string Pastel(string text, int r, int g, int b) => "\u001b[38;2;" + r + ";" + g + ";" + b + "m" + text;
-        private static string Pastel(char c, int r, int g, int b) => "\u001b[38;2;" + r + ";" + g + ";" + b + "m" + c;
+        private static void ResetColor() => WriteConsole("\u001b[0m");
+
+        //private static string Pastel(string text, int r, int g, int b) => "\u001b[38;2;" + r + ";" + g + ";" + b + "m" + text;
+        public static string Pastel(char c, int r, int g, int b) => "\u001b[38;2;" + r + ";" + g + ";" + b + "m" + c;
+
         private static string SetPosition(int row, int collum) => "\u001b[" + row + ";" + collum + "H";
 
         [StructLayout(LayoutKind.Sequential)]
@@ -67,7 +73,7 @@ namespace AsciiPlayer
 
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetConsoleScreenBufferSize(IntPtr hConsoleOutput, COORD dwSize);
 
-        [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GetStdHandle(int nStdHandle);
+        [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GetStdHandle(int nStdHandle);
 
         [DllImport("kernel32.dll")] private static extern bool SetConsoleTextAttribute(IntPtr hConsoleOutput, int wAttributes);
 
@@ -87,15 +93,7 @@ namespace AsciiPlayer
 
         [DllImport("kernel32.dll", ExactSpelling = true)] private static extern IntPtr GetConsoleWindow();
 
-        public static class ConsoleHelper
-        {
-            private const int FixedWidthTrueType = 54; private const int StandardOutputHandle = -11; [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] internal static extern bool SetCurrentConsoleFontEx(IntPtr hConsoleOutput, bool MaximumWindow, ref FontInfo ConsoleCurrentFontEx); [return: MarshalAs(UnmanagedType.Bool)][DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] internal static extern bool GetCurrentConsoleFontEx(IntPtr hConsoleOutput, bool MaximumWindow, ref FontInfo ConsoleCurrentFontEx); private static readonly IntPtr ConsoleOutputHandle = GetStdHandle(StandardOutputHandle); [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] public struct FontInfo { internal int cbSize; internal int FontIndex; internal short FontWidth; public short FontSize; public int FontFamily; public int FontWeight; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string FontName; }
-
-            public static FontInfo[] SetCurrentFont(string font, short fontSize = 0)
-            {
-                FontInfo before = new FontInfo { cbSize = Marshal.SizeOf<FontInfo>() }; if (GetCurrentConsoleFontEx(ConsoleOutputHandle, false, ref before)) { FontInfo set = new FontInfo { cbSize = Marshal.SizeOf<FontInfo>(), FontIndex = 0, FontFamily = FixedWidthTrueType, FontName = font, FontWeight = 400, FontSize = fontSize > 0 ? fontSize : before.FontSize }; if (!SetCurrentConsoleFontEx(ConsoleOutputHandle, false, ref set)) { throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); } FontInfo after = new FontInfo { cbSize = Marshal.SizeOf<FontInfo>() }; GetCurrentConsoleFontEx(ConsoleOutputHandle, false, ref after); return new[] { before, set, after }; } else { var er = Marshal.GetLastWin32Error(); Console.WriteLine("Get error " + er); throw new System.ComponentModel.Win32Exception(er); }
-            }
-        }
+        [DllImport("user32.dll", SetLastError = true)] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
         private enum ColorDifferenceMode
         {
@@ -127,12 +125,21 @@ namespace AsciiPlayer
             {
                 int index = argument.IndexOf('=');
 
+                if (index == -1) continue;
+
                 string value = argument.Substring(index + 1);
 
-                if (index != -1) argsSplited.Add(argument.Substring(0, index).ToLower(), (value[0] == '\"' && value[value.Length - 1] == '\"' ? value.Substring(1, value.Length - 2) : value));
+                argsSplited.Add(argument.Substring(0, index).ToLower(), (value[0] == '\"' && value[value.Length - 1] == '\"' ? value.Substring(1, value.Length - 2) : value));
             }
 
-            string videoPath = args.Length == 0 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads\\tactical thermonuclear gnome.mp4") : args[0];
+            foreach (DictionaryEntry element in Environment.GetEnvironmentVariables())
+            {
+                if (argsSplited.ContainsKey((string)element.Key)) continue;
+
+                argsSplited.Add((string)element.Key, (string)element.Value);
+            }
+
+            string videoPath = args.Length == 0 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads\\PABLO.mp4") : args[0];
 
             Console.Title = Path.GetFileNameWithoutExtension(videoPath);
 
@@ -145,6 +152,7 @@ namespace AsciiPlayer
             consoleHandle = GetStdHandle(-11);
 
             ConsoleHelper.SetCurrentFont("Consolas", 1);
+            Console.CursorVisible = false;
 
             consoleStream = Console.OpenStandardOutput();
 
@@ -155,11 +163,18 @@ namespace AsciiPlayer
             //GetConsoleScreenBufferInfo(consoleHandle, out var scrBufferInfo);
             //SetConsoleScreenBufferSize(consoleHandle, new COORD { X = scrBufferInfo.dwSize.X, Y = (short)(scrBufferInfo.srWindow.Bottom - scrBufferInfo.srWindow.Top + 1) });
 
+            /*ImgToAscii.Compile(
+                 ((Bitmap)Image.FromFile("C:\\Users\\Mrgaton\\Downloads\\istockphoto-670137214-612x612.jpg")).ToMat(), "El_gato_con_gafas");
+
+            Environment.Exit(1);*/
+
+#if colorEnabled
             IntPtr consoleWindowHandle = GetConsoleWindow();
 
             SetWindowLong(consoleWindowHandle, GWL_STYLE, GetWindowLong(consoleWindowHandle, GWL_STYLE) & ~WS_MAXIMIZEBOX & ~WS_MINIMIZEBOX);
 
-            Write(Pastel("", 255, 255, 255));
+            WriteConsole(Pastel(' ', 255, 255, 255));
+#endif
 
             //char[] charSet = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,\"^`'.  ";
 
@@ -171,21 +186,23 @@ namespace AsciiPlayer
 
             const int colorLessMinCharSetLengh = 1;
 
-#if colorEnabled
-            int minColorChangeNeeded = GetArgInt("mincolorchange", 64);
-#endif
+            int fpsDivisor = GetArgInt("fpsdivisor", 2);
 
-            int fpsDivisor = GetArgInt("fpsdivisor", 1);
-
-            int withDivisor = GetArgInt("sizedivisor", 3), heightDivisor = withDivisor * 2;
+            int withDivisor = GetArgInt("sizedivisor", 2), heightDivisor = withDivisor * 2;
 
             const int audioBufferLengh = 1000;
 
             VideoCapture capture = new VideoCapture();
 
+#if colorEnabled
+            int minColorChangeNeeded = GetArgInt("mincolorchange", 64);
+
             int blankBrightNess = ((maxBrightness) / charSet.Length) * colorLessMinCharSetLengh;
+#endif
 
             int timeBetweenFrames = 0;
+
+            bool firstTime = true;
 
             while (true)
             {
@@ -193,7 +210,7 @@ namespace AsciiPlayer
 
                 BufferedWaveProvider bufferedWaveProvider = new BufferedWaveProvider(reader.WaveFormat);
                 bufferedWaveProvider.BufferDuration = TimeSpan.FromMilliseconds(audioBufferLengh * 4);
-                bufferedWaveProvider.DiscardOnBufferOverflow = false;
+                bufferedWaveProvider.DiscardOnBufferOverflow = true;
                 bufferedWaveProvider.ReadFully = true;
 
                 WaveOutEvent player = new WaveOutEvent();
@@ -223,21 +240,22 @@ namespace AsciiPlayer
 
                 bool sucess = false;
 
-                while (!sucess)
+                while (firstTime && !sucess)
                 {
                     try
                     {
-                        Console.SetWindowSize((frameWidth / withDivisor) + 1, (frameHeight / heightDivisor) + 2);
+                        Console.SetWindowSize((frameWidth / withDivisor) + 1, (frameHeight / heightDivisor) + 1);
 
                         sucess = true;
                     }
                     catch
                     {
-                        Write("Please set console smallet with (control + minus)");
+                        WriteConsole("Please set console smallet with (control + minus)\n");
 
-                        Thread.Sleep(500);
+                        Thread.Sleep(100);
                     }
                 }
+                firstTime = false;
 
                 Console.BufferWidth = Console.WindowWidth;
                 Console.BufferHeight = Console.WindowHeight;
@@ -265,9 +283,13 @@ namespace AsciiPlayer
 
                 int[] rowIndexes = new int[(frameHeight / heightDivisor) + 4];
 
+                capture.Read(img);
+
                 while (capture.IsOpened())
                 {
-                    for (int i = 0; i < fpsDivisor; i++) capture.Read(img);
+                    for (int i = 0; i < fpsDivisor - 1; i++) capture.Grab();
+
+                    capture.Read(img);
 
                     if (img.Empty()) break;
 
@@ -278,12 +300,9 @@ namespace AsciiPlayer
                         if (timeIntegrity.ElapsedMilliseconds / 1000 < currentSecond)
                         {
                             int timeToWait = (currentSecond * 1000) - (int)timeIntegrity.ElapsedMilliseconds - 1;
-
                             if (timeToWait > timeBetweenFrames) timeBetweenFrames++;
 
-                            lasSleepTime = timeToWait;
-
-                            Thread.Sleep(timeToWait);
+                            Thread.Sleep(lasSleepTime = timeToWait);
                         }
                         else// if (difference > timeBetweenFrames)
                         {
@@ -296,10 +315,14 @@ namespace AsciiPlayer
                         currentSecond++;
                     }
 
-                    for (int y = 0; y < img.Height; y += heightDivisor)
+                    for (int y = 0; y < frameHeight; y += heightDivisor)
                     {
-                        for (int x = 0; x < img.Width; x += withDivisor)
+                        if (y > frameHeight) break;
+
+                        for (int x = 0; x < frameWidth; x += withDivisor)
                         {
+                            if (x > frameWidth) break;
+
                             Vec3b pixelValue = img.At<Vec3b>(y, x);
 
                             int brightness = pixelValue.Item0 + pixelValue.Item1 + pixelValue.Item2;
@@ -307,9 +330,10 @@ namespace AsciiPlayer
                             char predictedChar = charSet[(brightness * charSet.Length) / maxBrightness];
 
                             //MaximizeBrightness(ref pixelValue.Item2, ref pixelValue.Item1, ref pixelValue.Item0);
-
-                            int colorDiff = Math.Abs(pixelValue.Item2 - lastR) + Math.Abs(pixelValue.Item1 - lastG) + Math.Abs(pixelValue.Item0 - lastB);
+                            //QuantinizePixel(ref pixelValue.Item2, ref pixelValue.Item1, ref pixelValue.Item0);
 #if colorEnabled
+                            int colorDiff = Math.Abs(pixelValue.Item2 - lastR) + Math.Abs(pixelValue.Item1 - lastG) + Math.Abs(pixelValue.Item0 - lastB);
+
                             if (brightness > blankBrightNess && colorDiff > minColorChangeNeeded) //Dont change the color if its too similar to the current one
                             {
                                 sb.Append(Pastel(predictedChar, pixelValue.Item2, pixelValue.Item1, pixelValue.Item0));
@@ -324,7 +348,7 @@ namespace AsciiPlayer
                             }
 
 #else
-                                sb.Append(predictedChar);
+                            sb.Append(predictedChar);
 #endif
                         }
 
@@ -336,30 +360,27 @@ namespace AsciiPlayer
 #if colorEnabled
                     string frame = sb.ToString();
 #else
+                    //int lengh = sb.ToString().Split('\n').Length;
 
-                        int lengh = sb.ToString().Split('\n').Length;
+                    string frame = string.Join("\n", sb.ToString().Split('\n').Select(line =>
+                    {
+                        string trimed = line.TrimEnd();
 
-                        string frame = string.Join("\n", sb.ToString().Split('\n').Select(line =>
-                        {
-                            string trimed = line.TrimEnd();
+                        int trimedLengh = trimed.Length; //RemoveAnsi(trimed).Length;
 
-                            int trimedLengh = trimed.Length; //RemoveAnsi(trimed).Length;
+                        int diff = rowIndexes[currentRowIndex] - trimedLengh;
 
-                            Console.WriteLine(lengh);
+                        rowIndexes[currentRowIndex++] = trimedLengh;
 
-                            int diff = rowIndexes[currentRowIndex] - trimedLengh;
+                        if (diff <= 0) return trimed;
 
-                            rowIndexes[currentRowIndex++] = trimedLengh;
-
-                            if (diff <= 0) return trimed;
-
-                            return trimed + new string(' ', diff);
-                        }));
+                        return trimed + new string(' ', diff);
+                    }));
 #endif
 
                     sb.Clear();
 
-                    Write(ref frame);
+                    WriteConsole(ref frame);
 
                     SetPosition(0);
 
@@ -373,9 +394,19 @@ namespace AsciiPlayer
                 }
 
                 if (!loopVideo) break;
-                    
+
                 Thread.Sleep(750);
             }
+        }
+
+#if colorEnabled
+        private const byte quantinizeValue = 16;
+
+        public static void QuantinizePixel(ref byte R, ref byte G, ref byte B)
+        {
+            R = (byte)((R / quantinizeValue) * quantinizeValue);
+            G = (byte)((G / quantinizeValue) * quantinizeValue);
+            B = (byte)((B / quantinizeValue) * quantinizeValue);
         }
 
         public static void MaximizeBrightness(ref byte R, ref byte G, ref byte B)
@@ -391,6 +422,8 @@ namespace AsciiPlayer
                 B = (byte)(B * factor);
             }
         }
+
+#endif
 
         public static void WriteAudio(BufferedWaveProvider buffer, MediaFoundationReader reader, int secconds)
         {
